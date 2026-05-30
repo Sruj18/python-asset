@@ -1,0 +1,490 @@
+---
+title: "Asset Final"
+output: word_document
+date: "`r Sys.Date()`"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r,message=FALSE, echo=TRUE}
+#load packages
+
+library(readr)
+library(lubridate)
+library(dplyr)
+library(tidyverse)
+library(zoo)
+library(ggplot2)
+
+```
+
+#1)a)Download data from Kenneth French's Data library,report all names of 49 industries,verifying whether my data set contains 299 months of data
+
+```{r,message=FALSE, echo=TRUE}
+industries <- read.csv("C:/Users/srujs/OneDrive/Documents/R programming/49_Industry_Portfolios.csv")
+industries<- industries %>%
+  rename(Month = date)
+#Changed the format of Month
+industries$Month <- format(
+  as.Date(paste0(industries$Month, "01"), format = "%Y%m%d"),
+  "%Y-%m"
+)
+industries_names<- industries[-1]
+print(colnames(industries_names))
+months <- nrow(industries)
+cat("Start date:", industries$Month[1], "\n")
+cat("End date:", industries$Month[nrow(industries)], "\n")
+if(months==299){
+cat("No of months Your dataset contains:",months, "\n")
+   }else{
+    cat("Your dataset doesnot contain 299 months")
+   }
+
+```
+
+#1)a) Answer : The output clearly mentions all the names of 49 industries and also the data consists of 299 months of rows and my data starts from January 2001 to November 2024.
+
+
+
+
+#1)b) compute Average monthly return, SD, create table showing top 5 and bottom 5 ranked by average return
+
+```{r, message=FALSE, echo=TRUE}
+returns <- industries[,-1] #Remove Month column
+returns[] <- lapply(returns, as.numeric)
+
+#Compute Average monthly return & standard deviation for each 49 industries
+avg <- colMeans(returns, na.rm = TRUE)
+sdev <- apply(returns,2,sd, na.rm=TRUE)
+
+#Create a table to show top5 and bottom5 ranked by average return
+dt_table <- tibble(
+  Industry = names(avg),
+  Avg_ret = avg
+)
+top5 <- dt_table %>%
+  arrange(desc(Avg_ret)) %>%  
+  slice_head(n = 5)           
+top5$Rank <- paste0("Top", 1:5)
+top5 <- top5[, c("Rank", "Industry", "Avg_ret")]
+cat("--- Top 5 Industries ranked by average return ---\n")
+print(top5)
+bottom5 <- dt_table %>%
+  arrange(Avg_ret) %>%        
+  slice_head(n = 5) %>%
+  arrange(desc(Avg_ret))
+bottom5$Rank <- paste0("Bottom", 5:1)
+bottom5 <- bottom5[, c("Rank", "Industry", "Avg_ret")]
+cat("\n--- Bottom 5 Industries ranked by average return ---\n")
+print(bottom5)
+
+```
+
+#1)b) Answer : The output clearly sorted the average returns in descending order and provided the top 5 & bottom 5 industries in a table.Top 5 are Ships,Guns,Smoke,Cnstr,Coal and bottom 5 are Paper,Other,Toys,Books,Telcm.
+
+
+
+#1)c)Load fama frech and Momentum,merge,report mean,sd,minimum,maximum
+
+```{r, message=FALSE, echo=TRUE}
+Mom <- read.csv("C:/Users/srujs/OneDrive/Documents/R programming/Momentum_Factor.csv")
+Mom<- Mom %>%
+  rename(Month = date)
+Mom$Month <- format(
+  as.Date(paste0(Mom$Month, "01"), format = "%Y%m%d"),
+  "%Y-%m"
+)
+fff <- read.csv("C:/Users/srujs/OneDrive/Documents/R programming/Fama_French_Factors.csv")
+fff<- fff%>%
+  rename(Month = date)
+fff$Month <- format(
+  as.Date(paste0(fff$Month, "01"), format = "%Y%m%d"),
+  "%Y-%m"
+)
+
+#Merge all factors,momentum,49industries by month
+merge_data <- merge(industries, fff,by = "Month") 
+merge_data <- merge(merge_data, Mom,by = "Month")
+factors <- merge_data[, c("Mkt_RF", "SMB", "HML", "Mom")]
+factors <- as.data.frame(factors)
+row.names(factors) <- NULL
+
+#create a data set with mean,standard deviation,minimum,maximum for all four factors
+summary <- data.frame(
+  Factor = colnames(factors),
+  Mean = colMeans(factors, na.rm = TRUE),
+  SD = apply(factors, 2, sd, na.rm = TRUE),
+  Min = apply(factors, 2, min, na.rm = TRUE),
+  Max = apply(factors, 2, max, na.rm = TRUE),
+  row.names = NULL
+)
+print(summary)
+```
+
+#1)c)Answer: The output results are the mean,standard deviation,minimum,maximum for each four factors for a sample period from January 2000 to November 2024.
+
+
+
+#1)d) Scatter plot between Average industry returns and Industry return Volatality
+
+```{r,message=FALSE, echo=TRUE}
+#created scatter plot with average industry returns on y-axis and industry return volatility on x-axis
+Graph <- ggplot(dt_table, aes(x = sdev, y = avg)) + 
+  geom_point(size = 1, color = "blue") +
+  geom_smooth(method = "lm", color = "red", linewidth = 0.5) +
+  labs(
+    title = "Risk-Return Relationship Across Industries",
+    x = "Industry Return Volatility (Standard Deviation)",
+    y = "Average Industry Returns"
+  ) +
+  theme_minimal(base_size = 14)
+print(Graph)
+
+#created another same graph for better view
+plot(sdev,avg,pch=18,col="red",
+     main = "Risk-Return Relationship Across Industries",
+     xlab="Industry Return Volatility(Standard Deviation)",
+     ylab="Average Industry returns")
+abline(lm(avg~sdev),col="blue",lty=1)
+```
+
+#1)d) Answer : The scatter plot shows there appears to be moderate risk-return tradeoff.Based on Markowitz and CAPM,a positive relation between returns and risk.It means Industries with higher volatility have higher average returns to compensate for the risk they are taking.The above plot shows the slope is upwards with a positive relation between volatility and average returns.One industry have risk-return tradeoff and few industries with lower volatility have higher returns.If we see top5 average returns Coal is highly volatile,Ships,Cnstr high volatile giving high returns.Smoke maybe an outlier as it has high returns but lower volatility.Government bonds have low risks and moderate returns.
+
+
+
+#2)a)Time-series regressions #Run the regression for all industries,create table showing factor loadings & t statistics for 5 industries.
+
+```{r, message=FALSE, echo=TRUE}
+excess_ret<- returns-merge_data$RF
+e_names<- colnames(excess_ret)
+reg_results<-list()
+for(i in 1:ncol(excess_ret)){
+  model <- lm(excess_ret[,i] ~ Mkt_RF + SMB + HML + Mom, data=merge_data)
+  results<-as.data.frame(coef(summary(model))) # Stored all coefficients in results
+  results$Industry <- e_names[i]
+  results$Factor <- rownames(results)
+  reg_results[[i]] <- results
+}
+  all_results <- do.call(rbind, reg_results)
+rownames(all_results) <- NULL
+my_choice <-c("Gold","Fin","Softw","Aero","Mines")
+my_five<-all_results[all_results$Industry %in% my_choice,]
+my_table<-my_five[,c("Industry","Factor","Estimate","t value")]
+print(my_table)
+```
+#2)a)Answer: My choice of Industries are Gold,Fin,Softw,Aero,Mines
+
+
+#2)b)R2 values of all 49 Industries and average R2
+```{r, message=FALSE, echo=TRUE}
+R2 <- NULL
+for(i in 1:ncol(excess_ret)){
+model <- lm(excess_ret[,i] ~ Mkt_RF + SMB + HML + Mom, data = merge_data)
+  New_R2<- summary(model)$r.squared
+  Ind_name <- colnames(excess_ret)[i]
+  cat("The average R squared for", Ind_name, "industry is",New_R2, "\n")
+  R2<- rbind(R2, data.frame(Industry = Ind_name, R2value = New_R2))
+}
+AvgR2 <- mean(R2$R2value)
+cat("\nThe average R2 across all 49 industries is:", AvgR2)
+```
+#2)b)Answer: The average R2 across all 49 industries is 0.572(52.7%). It means this model performs moderately above average.Some industries such as BusSv,Softw,Banks,Fin have R2 values more than average that explains four factor model very well.But some industries such as Coal,Gold,Smoke,Soda,Guns,Beer have least values less than average around 0.21 suggest poor fit which couldnt explained the four factor model.To conclude,this model moderately doing well but still discrepancies exists.
+
+
+
+#2)c)Create histogram of Estimated market betas,range,identify any high or low market exposure.
+```{r, message=FALSE, echo=TRUE}
+Mkt_Beta <- all_results[all_results$Factor == "Mkt_RF",]
+hist(Mkt_Beta$Estimate,breaks=40,border="white",col="dark blue",
+     main="Histogram of Market Betas Across Industries",
+     xlab = "Market Beta Coefficient")
+grid(lty=2,col="grey")
+range_mkt <- range(Mkt_Beta$Estimate) #Range of Market betas
+print(range_mkt)
+cat("Range:",round(range_mkt[1],2), "to", round(range_mkt[2],2), "\n")
+high_low <- all_results %>%
+  filter(Factor == "Mkt_RF") %>%
+  arrange(Estimate)
+cat("Low market exposure industries\n");
+print(head(high_low[,c("Industry","Estimate")], 5)) #Low market exposure
+cat("High market exposure industries"); 
+print(tail(high_low[,c("Industry","Estimate")], 5)) # High market exposure
+```
+#2)c)Answer: Range of Market betas is 0.36(0.3605) to 1.54(1.5359)
+#Low Market exposure are Gold,Beer,Food,Hshld,Util
+#High Market Exposure are Fun,Fin,Chips,Autos,Steel
+
+
+#2)d)Identify 5 high and low momentum factor loadings
+```{r, message=FALSE, echo=TRUE}
+Mom_Beta<- all_results[all_results$Factor == "Mom", ]
+New_Mom<- Mom_Beta[order(Mom_Beta$Estimate, decreasing = TRUE),]
+high_5<- head(New_Mom, 5)
+high_5<- high_5[, c("Industry","Estimate","t value")]
+colnames(high_5) <- c("Industry","Estimated Mom Beta","tstatistic")
+cat("--- 5 Industries with Highest Momentum Beta ---")
+print(high_5)
+low_5 <- tail(New_Mom, 5)
+low_5<- low_5[, c("Industry","Estimate","t value")]
+colnames(low_5) <- c("Industry","Estimated Mom Beta","tstatistics")
+cat("---5 Industries with Lowest Momentum Beta---")
+print(low_5)
+```
+#2)d)Answer: Highest momentum betas are PerSv,Util,Hlth,Coal,Guns
+# Lowest momentum betas are Hardw,RIEst,Fun,Txtls,Autos
+
+
+
+#Question 3)Cross-Sectional Regressions
+#3)a) Cross-sectional regression for each month January 2000 to November 2024 and time series average of each estimated risk premium
+```{r, message=FALSE, echo=TRUE}
+new_betas <- all_results[all_results$Factor != "(Intercept)", ]
+cross_sec_reg <- function(e_returns,betasdt){
+  num_months <- nrow(e_returns) 
+  names_ind <- colnames(e_returns)
+  betas_factors <- c("Mkt_RF","SMB","HML","Mom")
+  
+  # Create empty Beta matrix to store values
+  betas_matrix <- matrix(NA, nrow = length(names_ind), ncol = length(betas_factors))
+  rownames(betas_matrix) <- names_ind
+  colnames(betas_matrix) <- betas_factors
+  for (i in names_ind) {
+    for (j in betas_factors) {
+      betas_matrix[i, j] <- betasdt$Estimate[betasdt$Industry == i & betasdt$Factor == j]
+    }
+  }
+  
+  # Create matrix to store lambdas where λ0 means Intercept and other four factors
+  lambdas <- matrix(NA, nrow = num_months, ncol = 5)
+  colnames(lambdas) <- c("λ0", "λ1_Mkt", "λ2_SMB", "λ3_HML", "λ4_Mom")
+  
+  # Cross-sectional regression for each month
+  for(t in 1:num_months){
+    y <- as.numeric(e_returns[t, ])
+    cross_reg <- lm(y ~ betas_matrix)
+    # Store the coefficients (intercept and 4 risk premiums)
+    lambdas[t, ] <- coef(cross_reg)
+  }
+  return(lambdas)
+}
+lambda_results <- cross_sec_reg(e_returns = excess_ret, betasdt = new_betas)
+lambda_results<- as.data.frame(lambda_results)
+lambda_results$Month <- merge_data$Month  
+lambda_results <- lambda_results[, c("Month", "λ0", "λ1_Mkt", "λ2_SMB", "λ3_HML", "λ4_Mom")]
+cat("Cross-sectional regression for no of month:", nrow(lambda_results), "\n")
+
+#For all 299 months run Cross sectional regression and save the file of huge data set values
+write.csv(lambda_results, file = "Fama_MacBeth_Lambdas.csv", row.names = FALSE)
+
+#A sample of Lambda results to check cross sectional regression for each month 
+summary_view <- rbind(head(lambda_results, 5), tail(lambda_results, 5))
+print(summary_view)
+
+#Printing all 299 months lambda_results
+print(lambda_results)
+
+#Compute time-series of all lambdas
+lambda_new <- lambda_results[, 2:6]  # exclude Month column
+lambdajbar <- colMeans(lambda_new, na.rm = TRUE)
+cat("Time series average of each estimated risk premiums:","\n")
+print(as.data.frame(lambdajbar))
+```
+#3)a)Answer : Done the cross-sectional regression for all 299 months and computed the time-series average of all lambdas.
+
+
+
+#3)b)Fama-MacBeth t-statistics
+```{r, message=FALSE, echo=TRUE}
+# Time-series average of estimated risk premiums
+T <- nrow(lambda_new)
+  lambdajbar <- apply(lambda_new,2,mean, na.rm = TRUE)
+  print(lambdajbar)
+  
+  # Calculate T-statistics (Standard practice for this model)
+  sdlambdaj<- apply(lambda_new, 2, sd, na.rm = TRUE)
+  tlambdaj <- lambdajbar / (sdlambdaj / sqrt(T))
+  
+  # Combine results into a simple table
+  lambda_tstats_table<- rbind(lambdajbar, tlambdaj)
+  rownames(lambda_tstats_table) <- c("Estimated Risk_Premium", "t-statistics")
+lambda_tstats_table <- as.data.frame(lambda_tstats_table)
+print(lambda_tstats_table)
+```
+
+#3)b)Answer : All four factors (Market, SMB, HML, or Momentum) have a t-statistic less than 1.96 so it means they are statistically not significant.It means the sample size and this model is not fit and rejecting Null hypothesis.
+
+
+#3)c)Compare all factor risk premiums with actual average factor returns.
+```{r, message=FALSE, echo=TRUE}
+avg_factor <- summary$Mean
+fac_risk <- lambdajbar[-1]
+names(fac_risk)
+comparison <- data.frame(
+  Factor = c("Mkt_RF", "SMB", "HML", "Mom"),
+  Estimated_Risk_Premium = as.numeric(fac_risk),
+  Actual_Avg_Return_Factors = as.numeric(avg_factor)
+)
+print(comparison)
+```
+#3)c)Factors priced in the cross section means estimated risk premiums should equal to factor's average returns.The results shows only HML is close to average returns seems it's well priced,Mkt_RF is less than average indicates its underpriced,Mom is gretaer than average indicates overpriced.But SML is negative though it has good returns penalized and not rewarded for taking the exposure.This model does not perfectly explain industry returns and imperfect for the given period.
+
+
+#3)d) plot time-series of estimated market risk premium (λ1)
+
+```{r, message=FALSE, echo=TRUE}
+time_index <- as.yearmon(lambda_results$Month)
+plot(zoo(lambda_results$λ1_Mkt,time_index), 
+     main="Time-series of Estimated Market Risk Premium", 
+     ylab="λ1", xlab="Year", col="blue", lwd=1.5)
+abline(h=0, col="red", lty=2)
+```
+
+
+#3)d) Answer: The plot shows its highly volatile and fluctuating alot.Early 2000 to 2003,2011-2013,2023 with high premiums and,2000 to 2003, 2008(-6%) to 2009 global financial crisis,2020 COVID(-4%) had seen negative spikes as systematic shocks penalized industries with high market betas.Conversely, high periods are noted during the subsequent recovery phases, particularly in 2003-2004,2009-2010 and 2021.During 2000 high beta sectors like software had seen massive negative premiums due to Dot-com Bubble crash.The trend line or the linear regression line remain close to zero indicating overall sample period it stayed positive
+
+
+#4)Long-Short Portfolio Strategy
+#4)a)Identify 10 highest and lowest Momentum factor loadings
+
+
+```{r, message=FALSE, echo=TRUE}
+Mom_Beta<- all_results[all_results$Factor == "Mom", ]
+New_Mom<- Mom_Beta[order(Mom_Beta$Estimate, decreasing = TRUE),]
+high_10<- head(New_Mom, 10)
+high_10<- high_10[, c("Industry","Estimate")]
+colnames(high_10) <- c("Industry","High Mom Beta")
+cat("--- 10 Industries with Highest Momentum Beta ---")
+print(high_10)
+low_10 <- tail(New_Mom, 10)
+low_10<- low_10[, c("Industry","Estimate")]
+colnames(low_10) <- c("Industry","Low Mom Beta")
+cat("---10 Industries with Lowest Momentum Beta---")
+print(low_10)
+```
+#4)a)Answer : 10 with low momentum are Clths,Banks,FabPr,Chips,Toys,Hardw,RIEst,Fun,Txtls,Autos and 10 with high momentum are PerSv,Util,Hlth,Coal,Guns,MedEq,Agric,Drugs,Cnstr,Oil
+
+
+# 4)b)Long-short portfolio of 10 high and low momentum beta industries.
+```{r,message=FALSE, echo=TRUE}
+#Taken 12 months window as my data set consists returns from Jan 2000 to Nov 2024 
+window <- 12
+count_mon <- nrow(returns)
+ret <- rep(NA, count_mon)
+long_ind <- rep(NA_character_, count_mon)  
+short_ind <- rep(NA_character_, count_mon)
+
+# My 10 High & Low Momentum industries from Question 2
+high_10_ls <- high_10$Industry  
+low_10_ls <- low_10$Industry   
+
+for (j in (window + 1):count_mon) {
+  ret_ls <- returns[(j-window):(j-1), c(high_10_ls, low_10_ls)]
+  #Data taken from merging of all files in Question 1 and extract current betas
+  ls_betas <- merge_data[(j-window):(j-1), ]
+  
+  # For each 10 High and Low Momentum Industries returns run regression with all current beta estimates 
+  beta_por <- apply(ret_ls, 2, function(col) {
+  my_port <- lm(col ~ Mkt_RF + SMB + HML + Mom, data = ls_betas)
+  coef(my_port)["Mom"]
+})
+  
+  # Create small table to store all results
+  tab_df <- data.frame(
+    Ind_Name_ls = c(high_10_ls, low_10_ls),
+    Beta_ls = beta_por
+  )
+  
+  # Arrange in the order to get Top 10 and Bottom 10 Industries
+  top10 <- head(arrange(tab_df, desc(Beta_ls)), 10)$Ind_Name
+  bottom10 <- head(arrange(tab_df, Beta_ls), 10)$Ind_Name
+  
+  #Calculate Mean of all top 10 and bottom 10 industries
+  returns_long <- mean(as.numeric(returns[j, top10]), na.rm = TRUE)
+  returns_short <- mean(as.numeric(returns[j, bottom10]), na.rm = TRUE)
+  ret[j] <- returns_long - returns_short
+  long_ind[j] <- paste(top10, collapse = ",")
+  short_ind[j] <- paste(bottom10, collapse = ",")
+}
+#Construct long-short portfolio strategy with all values
+long_short_port <- data.frame(
+  Month = merge_data$Month,
+  Monthly_returns = ret,
+  long_eqw = long_ind,
+  short_eqw = short_ind
+) %>% filter(!is.na(Monthly_returns))
+
+#print("Monthly returns of long-short portfolio from Jan 2001 to Nov 2024:")
+print(head(long_short_port,10))
+print(tail(long_short_port,10))
+View(long_short_port)
+```
+#4)b) Answer: Constructed the long-short portfolio strategy and computed monthly returns from January 2001 to November 2004 and Go long on 10 high momentum and go short on 10 low momentum industries.
+
+
+#4)c)Performance metrics of my long short portfolio
+
+```{r,message=FALSE, echo=TRUE}
+#Calculate average mean(annualized)
+avg_mon <- mean(long_short_port$Monthly_returns,na.rm=TRUE)
+avg_year <- avg_mon * 12
+
+#Calculate Standard deviation(annualized)
+sdev_mon <- sd(long_short_port$Monthly_returns,na.rm=TRUE)
+sdev_year <- sdev_mon * sqrt(12)
+
+#Calculate sharpe ratio with risk free rate of 0.0025 per month
+risk_free <- 0.0025
+mean_avg <- avg_mon-risk_free
+sharpe<- mean_avg/sdev_mon
+
+#Maximum drawdown is a specific measure in finance where the investors calculates downside risk. Its the worst case where the maximum observed loss from a peak(the highest point-buy) to a trough(the lowest point-sell) before a new peak is attained.
+
+cum_returns <- cumprod(1 + long_short_port$Monthly_returns/100)
+peak <- cummax(cum_returns)
+drawdown<- (cum_returns - peak) / peak
+max_drawdown <- min(drawdown, na.rm = TRUE)
+performance_ls <- data.frame(
+  Metrics = c("Avg Monthly return(Annualized)","Standard Deviation(Annualized)","Sharpe Ratio","Maximum drawdown"),
+  Results = c(avg_year,sdev_year,sharpe,max_drawdown)
+  )
+print(performance_ls)
+
+```
+#4)c)Answer : calculated all performance metrics.Maximum drawdown is a specific measure in finance where the investors calculates downside risk. Its the worst case where the maximum observed loss from a peak(the highest point-buy) to a trough(the lowest point-sell) before a new peak is attained.These metrics suggest this strategy doesnt perform well on risk-adjusted basis as low returns of 0.36%,SD 11.4% taking high risk comparing with low returns.Sharpe ratio is less than 0.5 with is not good no gain of excess returns.Maximum drawdown the worst scenario my portfolio lost its value of -42.1% from its peak which is so risky strategy compared with the returns.
+
+
+#4)d)Run factor regression of my long-short portfolio and create table of alpha and its tstatistics value
+
+```{r,message=FALSE, echo=TRUE}
+# Merged my long-short portfolio and factor values by month
+fac_reg <- long_short_port %>%
+  inner_join(merge_data,by = "Month")
+
+#Run regression for my long short portfolio returns and the four factors
+model<- lm(Monthly_returns~Mkt_RF + SMB + HML + Mom, data = fac_reg)
+summary_ls <- summary(model)
+print(summary_ls)
+
+#Extract only 1st row of Alpha(Intercept) values from all values
+alpha_ls <- (summary_ls$coefficients[1, ])
+
+#Extract only Estimate and t value columns of the alpha values
+alpha <- summary_ls$coefficients["(Intercept)", "Estimate"]
+tstat <- summary_ls$coefficients["(Intercept)", "t value"]
+
+#Create Alpha table with its t-statistics value
+alpha_table <- data.frame(
+  Metric = c("Alpha", "t-statistic"),
+  Value  = round(c(alpha, tstat), 4)
+)
+print(alpha_table)
+if(abs(tstat) > 1.96){
+  cat("\nAlpha is statistically significant\n")
+}else{
+    cat("\nAlpha is not statistically significant\n")
+  }
+
+```
+#4)d)Answer : "The Estimated Alpha of 0.0447 with a t-statistic of 0.2737. Because the t-value is below the critical value 1.96, the Alpha is statistically not significant, and we fail to reject the null hypothesis that Alpha equals zero. This result shows my strategy did not abnormal returns during the sample period.After adjusting for factor exposures, it is clear that my strategy fully explained and driven by systematic risk factors rather than a result of idiosyncratic factors.The Average R2 52.7% is good for industry returns.Investors wouldont be properly rewarded for the risk exposure.This startegy accounts for portfolio performance and not based on the skills to beat the benchmarks, weak,underperforming due to the values of sharpe ratio,marximum drawdown,alpha,t statistics.
